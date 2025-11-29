@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Asisten - Sistem Event Organizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#1E40AF',
+                        accent: '#F59E0B'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <h1 class="text-xl font-semibold text-gray-900">Dashboard Asisten</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <span class="text-sm text-gray-600" id="userInfo">Loading...</span>
+                    <button 
+                        id="logoutBtn"
+                        class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-md text-sm font-medium transition duration-200"
+                    >
+                        Keluar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <!-- Tab Navigation -->
+        <div class="mb-6">
+            <nav class="flex space-x-8">
+                <button class="tab-btn active" data-tab="overview">Overview</button>
+                <button class="tab-btn" data-tab="clients">Manajemen Klien</button>
+                <button class="tab-btn" data-tab="events">Manajemen Event</button>
+                <button class="tab-btn" data-tab="calendar">Kalender Event</button>
+                <button class="tab-btn" data-tab="vendors">Daftar Vendor</button>
+                <button class="tab-btn" data-tab="reports">Laporan Anggaran</button>
+            </nav>
+        </div>
+
+        <!-- Overview Tab -->
+        <div id="overview-tab" class="tab-content">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white overflow-hidden shadow rounded-lg">
+                    <div class="p-5">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0">
+                                <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+                                    <span class="text-white text-sm font-bold">E</span>
+                                </div>
+                            </div>
+                            <div class="ml-5 w-0 flex-1">
+                                <dl>
+                                    <dt class="text-sm font-medium text-gray-500 truncate">Event Saya</dt>
+                                    <dd class="text-lg font-medium text-gray-900" id="myEvents">-</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white overflow-hidden shadow rounded-lg">
+                    <div class="p-5">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0">
+                                <div class="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                                    <span class="text-white text-sm font-bold">✓</span>
+                                </div>
+                            </div>
+                            <div class="ml-5 w-0 flex-1">
+                                <dl>
+                                    <dt class="text-sm font-medium text-gray-500 truncate">Event Selesai</dt>
+                                    <dd class="text-lg font-medium text-gray-900" id="completedEvents">-</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white overflow-hidden shadow rounded-lg">
+                    <div class="p-5">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0">
+                                <div class="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center">
+                                    <span class="text-white text-sm font-bold">⏳</span>
+                                </div>
+                            </div>
+                            <div class="ml-5 w-0 flex-1">
+                                <dl>
+                                    <dt class="text-sm font-medium text-gray-500 truncate">Event Berlangsung</dt>
+                                    <dd class="text-lg font-medium text-gray-900" id="ongoingEvents">-</dd>
+                                </dl>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- My Recent Events -->
+            <div class="bg-white shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Event Terbaru yang Saya Tangani</h3>
+                    <div id="myRecentEvents" class="space-y-3">
+                        <!-- Events will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Clients Tab -->
+        <div id="clients-tab" class="tab-content hidden">
+            <div class="bg-white shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900">Manajemen Data Klien</h3>
+                        <button 
+                            id="addClientBtn"
+                            class="bg-primary hover:bg-secondary text-white px-4 py-2 rounded-md text-sm font-medium"
+                        >
+                            Tambah Klien
+                        </button>
+                    </div>
+                    <div id="clientsTable" class="overflow-x-auto">
+                        <!-- Clients table will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Events Tab -->
+        <div id="events-tab" class="tab-content hidden">
+            <div class="bg-white shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900">Manajemen Event Saya</h3>
+                        <button 
+                            id="addEventBtn"
+                            class="bg-primary hover:bg-secondary text-white px-4 py-2 rounded-md text-sm font-medium"
+                        >
+                            Tambah Event
+                        </button>
+                    </div>
+                    <div id="eventsTable" class="overflow-x-auto">
+                        <!-- Events table will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Calendar Tab -->
+        <div id="calendar-tab" class="tab-content hidden">
+            <div class="bg-white shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900">Kalender Event Saya</h3>
+                        <div class="flex items-center space-x-4">
+                            <button id="prevMonth" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">‹ Prev</button>
+                            <span id="currentMonth" class="font-medium text-lg"></span>
+                            <button id="nextMonth" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Next ›</button>
+                        </div>
+                    </div>
+                    <div id="calendar" class="grid grid-cols-7 gap-1 text-center">
+                        <!-- Calendar will be generated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vendors Tab -->
+        <div id="vendors-tab" class="tab-content hidden">
+            <div class="bg-white shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Daftar Vendor</h3>
+                    <div class="mb-4">
+                        <select id="vendorFilter" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                            <option value="">Semua Jenis Vendor</option>
+                        </select>
+                    </div>
+                    <div id="vendorsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- Vendors will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reports Tab -->
+        <div id="reports-tab" class="tab-content hidden">
+            <div class="space-y-6">
+                <!-- Budget Report -->
+                <div class="bg-white shadow rounded-lg">
+                    <div class="px-4 py-5 sm:p-6">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Laporan Anggaran Event</h3>
+                        <div class="mb-4">
+                            <select id="eventSelect" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                                <option value="">Pilih Event</option>
+                            </select>
+                        </div>
+                        <div id="budgetReport">
+                            <p class="text-gray-500">Pilih event untuk melihat detail budget</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- My Events Report -->
+                <div class="bg-white shadow rounded-lg">
+                    <div class="px-4 py-5 sm:p-6">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Riwayat Event Saya</h3>
+                        <div id="myEventsReport">
+                            <!-- Events report will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Client Modal -->
+    <div id="addClientModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-semibold mb-4">Tambah Klien Baru</h3>
+            <form id="addClientForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Nama Klien</label>
+                    <input type="text" name="nama" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Alamat</label>
+                    <textarea name="alamat" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary"></textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">No. Telepon</label>
+                    <input type="text" name="noTelp" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Email</label>
+                    <input type="email" name="email" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" id="cancelClientBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                        Batal
+                    </button>
+                    <button type="submit" class="px-4 py-2 bg-primary text-white rounded hover:bg-secondary">
+                        Simpan
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Event Modal -->
+    <div id="addEventModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-semibold mb-4">Tambah Event Baru</h3>
+            <form id="addEventForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Nama Event</label>
+                    <input type="text" name="nama" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Tanggal Event</label>
+                    <input type="date" name="tglEvent" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Jumlah Undangan</label>
+                    <input type="number" name="jumlahUndangan" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Budget Event</label>
+                    <input type="number" name="budgetEvent" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Jenis Event</label>
+                    <select name="idJenisEvent" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                        <option value="">Pilih Jenis Event</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Klien</label>
+                    <select name="idKlien" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                        <option value="">Pilih Klien</option>
+                    </select>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" id="cancelEventBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                        Batal
+                    </button>
+                    <button type="submit" class="px-4 py-2 bg-primary text-white rounded hover:bg-secondary">
+                        Simpan
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Event Vendor Management Modal -->
+    <div id="eventVendorModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">Kelola Vendor Event</h3>
+                <button id="closeEventVendorModal" class="text-gray-400 hover:text-gray-600">
+                    <span class="text-2xl">&times;</span>
+                </button>
+            </div>
+            
+            <div class="mb-4 p-4 bg-gray-50 rounded-lg">
+                <h4 class="font-medium text-gray-900" id="eventVendorTitle">Event: -</h4>
+                <p class="text-sm text-gray-600" id="eventVendorBudget">Budget: -</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Available Vendors -->
+                <div>
+                    <h4 class="font-medium text-gray-900 mb-3">Vendor Tersedia</h4>
+                    <div class="mb-3">
+                        <select id="vendorTypeFilter" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                            <option value="">Semua Jenis Vendor</option>
+                        </select>
+                    </div>
+                    <div id="availableVendors" class="space-y-2 max-h-96 overflow-y-auto">
+                        <!-- Available vendors will be loaded here -->
+                    </div>
+                </div>
+
+                <!-- Selected Vendors -->
+                <div>
+                    <h4 class="font-medium text-gray-900 mb-3">Vendor Terpilih</h4>
+                    <div id="selectedVendors" class="space-y-2 max-h-96 overflow-y-auto">
+                        <!-- Selected vendors will be loaded here -->
+                    </div>
+                    <div class="mt-4 p-3 bg-blue-50 rounded-lg">
+                        <div class="flex justify-between text-sm">
+                            <span>Total Biaya Vendor:</span>
+                            <span class="font-medium" id="totalVendorCost">Rp 0</span>
+                        </div>
+                        <div class="flex justify-between text-sm mt-1">
+                            <span>Sisa Budget:</span>
+                            <span class="font-medium" id="remainingBudget">Rp 0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Price Dealing Modal -->
+    <div id="priceDealingModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-semibold mb-4">Negosiasi Harga Vendor</h3>
+            <div class="space-y-4">
+                <div class="p-4 bg-gray-50 rounded-lg">
+                    <h4 class="font-medium" id="dealingVendorName">Vendor: -</h4>
+                    <p class="text-sm text-gray-600" id="dealingVendorType">Jenis: -</p>
+                    <p class="text-sm text-gray-600" id="dealingVendorBasePrice">Harga Dasar: -</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Harga Setelah Negosiasi</label>
+                    <input type="number" id="dealingPrice" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary" placeholder="Masukkan harga deal">
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" id="cancelDealingBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                        Batal
+                    </button>
+                    <button type="button" id="saveDealingBtn" class="px-4 py-2 bg-primary text-white rounded hover:bg-secondary">
+                        Simpan
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Detail Modal for calendar -->
+    <div id="eventDetailModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">Detail Event</h3>
+                <button id="closeEventDetail" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="eventDetailContent">
+                <!-- Event details will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/dashboard-assistant.js"></script>
+</body>
+</html>
