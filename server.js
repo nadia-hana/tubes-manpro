@@ -162,4 +162,79 @@ app.get("/api/vendor-usage-stats", authenticateToken, async (req, res) => {
   }
 })
 
+
+//-------------WP 3.1 ----------- //
+// Get all clients
+app.get("/api/clients", authenticateToken, async (req, res) => {
+  console.log(`[CLIENTS] Fetching clients for user: ${req.user.username}`)
+  const query = "SELECT * FROM Klien"
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[CLIENTS] Found ${result.recordset.length} clients`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[CLIENTS] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Add new client
+app.post("/api/clients", authenticateToken, async (req, res) => {
+  const { nama, alamat, noTelp, email } = req.body
+  console.log(`[CLIENTS] Adding new client: ${nama} by user: ${req.user.username}`)
+
+  const query = "INSERT INTO Klien (Nama, Alamat, NoTelp, Email) OUTPUT INSERTED.IdKlien VALUES (?, ?, ?, ?)"
+  try {
+    const result = await loggedQuery(query, [nama, alamat, noTelp, email])
+    console.log(`[CLIENTS] Client added successfully with ID: ${result.recordset[0].IdKlien}`)
+    res.json({ message: "Klien berhasil ditambahkan", id: result.recordset[0].IdKlien })
+  } catch (err) {
+    console.error("[CLIENTS] Error adding client:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Delete client (for assistants)
+app.delete("/api/clients/:id", authenticateToken, async (req, res) => {
+  const clientId = req.params.id
+  console.log(`[DELETE-CLIENT] Deleting client ID: ${clientId} by user: ${req.user.username}`)
+
+  try {
+    // Check if client is used in any events
+    const checkQuery = "SELECT COUNT(*) as count FROM Event WHERE IdKlien = ?"
+    const checkResult = await loggedQuery(checkQuery, [clientId])
+
+    if (checkResult.recordset[0].count > 0) {
+      return res.status(400).json({
+        error: "Tidak dapat menghapus klien ini karena memiliki event",
+        details: `Klien ini memiliki ${checkResult.recordset[0].count} event. Hapus atau transfer event tersebut terlebih dahulu.`,
+        constraint: "foreign_key",
+      })
+    }
+
+    // Delete client
+    const deleteQuery = "DELETE FROM Klien WHERE IdKlien = ?"
+    const result = await loggedQuery(deleteQuery, [clientId])
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "Klien tidak ditemukan" })
+    }
+
+    console.log(`[DELETE-CLIENT] Client deleted successfully: ${clientId}`)
+    res.json({ message: "Klien berhasil dihapus" })
+  } catch (err) {
+    console.error("[DELETE-CLIENT] Database error:", err)
+
+    // Check for specific SQL Server FK constraint errors
+    if (err.message.includes("REFERENCE constraint") || err.message.includes("FOREIGN KEY")) {
+      return res.status(400).json({
+        error: "Tidak dapat menghapus klien ini karena memiliki event yang terkait",
+        details: "Klien ini masih memiliki event yang terhubung. Hapus event tersebut terlebih dahulu.",
+        constraint: "foreign_key",
+      })
+    }
+
+    return res.status(500).json({ error: "Database error" })
+  }
+})
 // ------------WP 3.2------------ //
