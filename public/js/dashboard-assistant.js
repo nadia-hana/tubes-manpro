@@ -216,6 +216,95 @@
     }
   }
 
+  window.openEventVendorModal = async (eventId, eventName, eventBudget) => {
+    currentEventId = eventId
+    currentEventBudget = eventBudget
+
+    document.getElementById("eventVendorTitle").textContent = `Event: ${eventName}`
+    document.getElementById("eventVendorBudget").textContent = `Budget: ${formatCurrency(eventBudget)}`
+
+    await loadEventVendors()
+    await loadAvailableVendors()
+
+    document.getElementById("eventVendorModal").classList.remove("hidden")
+  }
+
+  async function handleSaveDealing() {
+    const dealingPrice = Number.parseFloat(document.getElementById("dealingPrice").value)
+    if (!dealingPrice || dealingPrice <= 0) {
+      showNotification("Masukkan harga yang valid", "error")
+      return
+    }
+
+    try {
+      await apiCall(`/events/${currentEventId}/vendors`, {
+        method: "POST",
+        body: JSON.stringify({
+          idVendor: currentDealingVendor.IdVendor,
+          hargaDealing: dealingPrice,
+        }),
+      })
+
+      showNotification("Vendor berhasil ditambahkan/diupdate")
+      document.getElementById("priceDealingModal").classList.add("hidden")
+
+      await loadEventVendors()
+      await loadAvailableVendors()
+    } catch (error) {
+      console.error("Error saving vendor dealing:", error)
+      showNotification("Gagal menyimpan vendor", "error")
+    }
+  }
+
+  // ===== WP 3.4 ===== //
+  async function loadBudgetReport() {
+    const eventId = document.getElementById("eventSelect").value
+    if (!eventId) {
+      document.getElementById("budgetReport").innerHTML =
+        '<p class="text-gray-500">Pilih event untuk melihat detail budget</p>'
+      return
+    }
+
+    try {
+      const budgetData = await apiCall(`/events/${eventId}/budget`)
+
+      if (budgetData.length === 0) {
+        document.getElementById("budgetReport").innerHTML =
+          '<p class="text-gray-500">Belum ada vendor yang dipilih untuk event ini</p>'
+        return
+      }
+
+      const totalCost = budgetData.reduce((sum, item) => sum + Number.parseFloat(item.HargaDealing), 0)
+
+      const budgetHtml = `
+                <div class="space-y-3">
+                    <div class="bg-blue-50 p-3 rounded">
+                        <p class="font-semibold text-blue-900">Total Perkiraan Biaya: ${formatCurrency(totalCost)}</p>
+                    </div>
+                    ${budgetData
+                      .map(
+                        (item) => `
+                        <div class="flex justify-between items-center p-3 bg-gray-50 rounded">
+                            <div>
+                                <p class="font-medium">${item.VendorNama}</p>
+                                <p class="text-sm text-gray-500">${item.JenisVendorNama}</p>
+                            </div>
+                            <p class="font-medium">${formatCurrency(item.HargaDealing)}</p>
+                        </div>
+                    `,
+                      )
+                      .join("")}
+                </div>
+            `
+
+      document.getElementById("budgetReport").innerHTML = budgetHtml
+    } catch (error) {
+      console.error("Error loading budget report:", error)
+      showNotification("Gagal memuat laporan budget", "error")
+    }
+  }
+
+  // ===== WP 3.4 ===== //
   async function handleAddEvent(e) {
     e.preventDefault()
     const formData = new FormData(e.target)
