@@ -377,4 +377,131 @@ async function loadEvents() {
     }
   }
 
+  async function loadEmployees() {
+    try {
+      const users = await apiCall("/users")
+      const assistants = users.filter((user) => user.Role === "asisten")
+
+      const employeesHtml = `
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            ${assistants
+              .map(
+                (assistant) => `
+                <tr>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${assistant.Nama}</td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${assistant.Username}</td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Asisten</td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <button onclick="deleteEmployee(${assistant.IdPengguna})" 
+                            class="text-red-600 hover:text-red-900">
+                      Hapus
+                    </button>
+                  </td>
+                </tr>
+              `,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      `
+      document.getElementById("employeesTable").innerHTML = employeesHtml
+    } catch (error) {
+      console.error("Error loading employees:", error)
+      showNotification("Gagal memuat data asisten", "error")
+    }
+  }
+
+  async function handleAddEmployee(e) {
+    e.preventDefault()
+    const formData = new FormData(e.target)
+
+    const employeeData = {
+      nama: formData.get("nama"),
+      email: formData.get("email"),
+      password: formData.get("password"),
+      role: "asisten",
+    }
+
+    try {
+      await apiCall("/users", {
+        method: "POST",
+        body: JSON.stringify(employeeData),
+      })
+
+      showNotification("Asisten berhasil ditambahkan")
+      document.getElementById("addEmployeeModal").classList.add("hidden")
+      e.target.reset()
+
+      // Reload employees if currently viewing employees tab
+      if (!document.getElementById("employees-tab").classList.contains("hidden")) {
+        loadEmployees()
+      }
+
+      // Reload overview data
+      loadOverviewData()
+    } catch (error) {
+      console.error("Error adding employee:", error)
+      showNotification("Gagal menambah asisten", "error")
+    }
+  }
+
+  window.deleteEmployee = async (employeeId) => {
+    if (!confirm("Yakin ingin menghapus asisten ini?")) return
+
+    const button = document.querySelector(`button[onclick="deleteEmployee(${employeeId})"]`)
+    let originalText = ""
+    if (button) {
+      originalText = button.innerHTML
+      button.innerHTML =
+        '<span class="animate-spin inline-block w-3 h-3 border-2 border-red-500 border-t-transparent rounded-full"></span>'
+      button.disabled = true
+    }
+
+    try {
+      await apiCall(`/users/${employeeId}`, {
+        method: "DELETE",
+      })
+
+      showNotification("Asisten berhasil dihapus")
+      loadEmployees()
+      loadOverviewData()
+    } catch (error) {
+      console.error("Error deleting employee:", error)
+
+      // Parse error response for FK constraint details
+      let errorMessage = "Gagal menghapus asisten"
+      let errorDetails = ""
+
+      try {
+        const errorResponse = (await error.response?.json?.()) || error
+        if (errorResponse.constraint === "foreign_key") {
+          errorMessage = errorResponse.error
+          errorDetails = errorResponse.details
+        }
+      } catch (parseError) {
+        // Use default error message
+      }
+
+      // Show detailed warning modal for FK constraints
+      if (errorDetails) {
+        showFKConstraintWarning("Tidak Dapat Menghapus Asisten", errorMessage, errorDetails)
+      } else {
+        showNotification(errorMessage, "error")
+      }
+
+      if (button) {
+        button.innerHTML = originalText
+        button.disabled = false
+      }
+    }
+  }
   
