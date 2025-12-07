@@ -195,6 +195,143 @@
   }
 // ------------WP 3.2------------ //
 
+// ------------WP 3.4------------ //
+
+  async function loadOverviewData() {
+    try {
+      const [events, vendors, clients, assistants] = await Promise.all([
+        apiCall("/events"),
+        apiCall("/vendors"),
+        apiCall("/clients"),
+        apiCall("/users"),
+      ])
+
+      const totalEvents = events.length
+      const totalVendors = vendors.length
+      const totalClients = clients.length
+      const totalAssistants = assistants.filter((user) => user.Role === "asisten").length
+
+      document.getElementById("totalEvents").textContent = totalEvents
+      document.getElementById("totalVendors").textContent = totalVendors
+      document.getElementById("totalClients").textContent = totalClients
+      document.getElementById("totalAssistants").textContent = totalAssistants
+
+      // Display recent events
+      const recentEvents = events.slice(0, 5)
+      const recentEventsHtml = recentEvents
+        .map(
+          (event) => `
+                <div class="flex justify-between items-center py-2 border-b">
+                    <div>
+                        <p class="font-medium">${event.Nama}</p>
+                        <p class="text-sm text-gray-500">${formatDate(event.TglEvent)} - ${event.KlienNama}</p>
+                    </div>
+                    <span class="px-2 py-1 text-xs rounded-full ${
+                      event.StatusEvent === "Selesai" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
+                    }">
+                        ${event.StatusEvent}
+                    </span>
+                </div>
+            `,
+        )
+        .join("")
+
+      document.getElementById("recentEvents").innerHTML =
+        recentEventsHtml || '<p class="text-gray-500">Tidak ada event terbaru</p>'
+    } catch (error) {
+      console.error("Error loading overview data:", error)
+      showNotification("Gagal memuat data overview", "error")
+    }
+  }
+  
+  async function loadReports() {
+    console.log(" Loading reports/analytics...")
+
+    const reportsElement = document.getElementById("vendorReport")
+    if (!reportsElement) {
+      console.error(" Reports element not found!")
+      return
+    }
+
+    reportsElement.innerHTML = `
+      <div class="text-center py-8">
+        <div class="animate-spin inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full"></div>
+        <p class="mt-2 text-gray-500">Memuat data analisis bisnis...</p>
+      </div>
+    `
+
+    try {
+      console.log(" Making API call to vendor-usage-stats...")
+      const vendorStats = await apiCall("/vendor-usage-stats")
+
+      console.log(" Vendor usage stats received:", vendorStats)
+      console.log(" Number of vendor stats:", vendorStats.length)
+
+      const reportsHtml = `
+        <div class="space-y-3">
+          ${
+            vendorStats && vendorStats.length > 0
+              ? vendorStats
+                  .map(
+                    (vendor, index) => `
+                <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg border">
+                  <div class="flex items-center">
+                    <div class="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-bold mr-3">
+                      ${index + 1}
+                    </div>
+                    <div>
+                      <span class="font-medium text-gray-900">${vendor.VendorNama || "Nama tidak tersedia"}</span>
+                      <div class="text-sm text-gray-500">${vendor.JenisVendor || "Jenis tidak tersedia"}</div>
+                      ${vendor.RataRataHarga ? `<div class="text-xs text-gray-400">Rata-rata: ${formatCurrency(vendor.RataRataHarga)}</div>` : ""}
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <span class="text-xl font-bold text-blue-600">${vendor.JumlahPenggunaan || 0}</span>
+                    <div class="text-sm text-gray-500">kali digunakan</div>
+                  </div>
+                </div>
+              `,
+                  )
+                  .join("")
+              : `
+                <div class="text-center py-8">
+                  <div class="text-gray-400 text-6xl mb-4">📊</div>
+                  <p class="text-gray-500 text-lg">Belum ada data vendor yang digunakan</p>
+                  <p class="text-gray-400 text-sm mt-2">Data akan muncul setelah ada event yang menggunakan vendor</p>
+                </div>
+                `
+          }
+        </div>
+      `
+
+      console.log(" Setting reports HTML...")
+      reportsElement.innerHTML = reportsHtml
+      console.log(" Reports HTML set successfully")
+    } catch (error) {
+      console.error(" Error loading reports:", error)
+      showNotification("Gagal memuat laporan", "error")
+
+      reportsElement.innerHTML = `
+        <div class="text-center py-8 bg-red-50 rounded-lg border border-red-200">
+          <div class="text-red-400 text-6xl mb-4">⚠️</div>
+          <p class="text-red-600 font-semibold">Gagal memuat data analisis bisnis</p>
+          <p class="text-sm text-gray-600 mt-2">Error: ${error.message}</p>
+          <div class="mt-4 p-3 bg-gray-100 rounded text-xs text-left max-w-md mx-auto">
+            <strong>Debug Info:</strong><br>
+            - Token: ${localStorage.getItem("token") ? "✓ Ada" : "✗ Tidak ada"}<br>
+            - Endpoint: /api/vendor-usage-stats<br>
+            - User Role: ${user.role}<br>
+            - Error Type: ${error.name}
+          </div>
+          <button onclick="loadReports()" class="mt-4 px-6 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">
+            🔄 Coba Lagi
+          </button>
+        </div>
+      `
+    }
+  }
+  
+// ------------WP 3.4------------ //
 
 //---3.3
 async function loadEvents() {
