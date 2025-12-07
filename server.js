@@ -416,6 +416,77 @@ app.get("/api/event-types", authenticateToken, async (req, res) => {
   }
 })
 
+
+const jwt = require("jsonwebtoken")
+
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"]
+  const token = authHeader && authHeader.split(" ")[1]
+
+  console.log(`[AUTH] Token verification for ${req.method} ${req.path}`)
+
+  if (!token) {
+    console.log("[AUTH] No token provided")
+    return res.status(401).json({ error: "Access token required" })
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      console.log("[AUTH] Invalid token:", err.message)
+      return res.status(403).json({ error: "Invalid token" })
+    }
+    console.log(`[AUTH] Token valid for user: ${user.username} (${user.role})`)
+    req.user = user
+    next()
+  })
+}
+
+app.post("/api/login", async (req, res) => {
+  const { username, password } = req.body
+  console.log(`[LOGIN] Login attempt for username: ${username}`)
+
+  try {
+    const query = "SELECT * FROM Pengguna WHERE Username = ?"
+    const result = await loggedQuery(query, [username])
+
+    if (result.recordset.length === 0) {
+      console.log(`[LOGIN] User not found: ${username}`)
+      return res.status(401).json({ error: "Username atau password salah" })
+    }
+
+    const user = result.recordset[0]
+    console.log(`[LOGIN] User found: ${user.Username}, Role: ${user.Role}`)
+
+    // Simple password check (in production, use bcrypt)
+    if (password !== user.Password) {
+      console.log(`[LOGIN] Invalid password for user: ${username}`)
+      return res.status(401).json({ error: "Username atau password salah" })
+    }
+
+    const token = jwt.sign(
+      {
+        id: user.IdPengguna,
+        username: user.Username,
+        role: user.Role,
+        nama: user.Nama,
+      },
+      JWT_SECRET,
+      { expiresIn: "24h" },
+    )
+
+    console.log(`[LOGIN] Login successful for ${username}, token generated`)
+    res.json({
+      token,
+      user: {
+        id: user.IdPengguna,
+        nama: user.Nama,
+        username: user.Username,
+        role: user.Role,
+      },
+    })
+  } catch (err) {
+    console.error("[LOGIN] Database error during login:", err)
+
 // ==== WP 3. 4 ==== //
 // Get event budget details
 app.get("/api/events/:id/budget", authenticateToken, async (req, res) => {
@@ -509,10 +580,28 @@ app.delete("/api/events/:eventId/vendors/:vendorId", authenticateToken, async (r
     res.json({ message: "Vendor berhasil dihapus dari event" })
   } catch (err) {
     console.error("[EVENT-VENDOR] Error removing vendor from event:", err)
+
     return res.status(500).json({ error: "Database error" })
   }
 })
 
+
+// Get all users (only for owner)
+app.get("/api/users", authenticateToken, async (req, res) => {
+  console.log(`[USERS] Access attempt by: ${req.user.username} (${req.user.role})`)
+
+  if (req.user.role !== "pemilik_usaha") {
+    console.log("[USERS] Access denied - not owner")
+    return res.status(403).json({ error: "Access denied" })
+  }
+
+  const query = "SELECT IdPengguna, Nama, Alamat, NoTelp, Username, Role FROM Pengguna"
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[USERS] Found ${result.recordset.length} users`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[USERS] Database error:", err)
 
 // Get dashboard statistics
 app.get("/api/dashboard/stats", authenticateToken, async (req, res) => {
@@ -587,11 +676,28 @@ app.get("/api/reports/vendor-popularity", authenticateToken, async (req, res) =>
   }
 })
 
+
+// Add new user (only for owner)
+app.post("/api/users", authenticateToken, async (req, res) => {
+
 // Get events per assistant report
 app.get("/api/reports/events-per-assistant", authenticateToken, async (req, res) => {
+
   if (req.user.role !== "pemilik_usaha") {
     return res.status(403).json({ error: "Access denied" })
   }
+
+
+  const { nama, alamat, noTelp, username, password } = req.body
+
+  const query =
+    "INSERT INTO Pengguna (Nama, Alamat, NoTelp, Username, Password, Role) OUTPUT INSERTED.IdPengguna VALUES (?, ?, ?, ?, ?, ?)"
+  try {
+    const result = await loggedQuery(query, [nama, alamat, noTelp, username, password, "asisten"])
+    console.log(`[USERS] User added successfully with ID: ${result.recordset[0].IdPengguna}`)
+    res.json({ message: "Karyawan berhasil ditambahkan", id: result.recordset[0].IdPengguna })
+  } catch (err) {
+    console.error("[USERS] Error adding user:", err)
 
   const query = `
     SELECT p.Nama as AsistenNama, 
@@ -612,15 +718,72 @@ app.get("/api/reports/events-per-assistant", authenticateToken, async (req, res)
     res.json(result.recordset)
   } catch (err) {
     console.error("[EVENTS-PER-ASSISTANT] Database error:", err)
+
     return res.status(500).json({ error: "Database error" })
   }
 })
 
+
+// Delete user (only for owner)
+app.delete("/api/users/:id", authenticateToken, async (req, res) => {
+
 // Get events per assistant report
 app.get("/api/reports/events-per-assistant", authenticateToken, async (req, res) => {
+
   if (req.user.role !== "pemilik_usaha") {
     return res.status(403).json({ error: "Access denied" })
   }
+
+
+  const userId = req.params.id
+  console.log(`[DELETE-USER] Deleting user ID: ${userId} by owner: ${req.user.username}`)
+
+  try {
+    // Check if user exists and is not the current user
+    const checkQuery = "SELECT * FROM Pengguna WHERE IdPengguna = ?"
+    const checkResult = await loggedQuery(checkQuery, [userId])
+
+    if (checkResult.recordset.length === 0) {
+      return res.status(404).json({ error: "User tidak ditemukan" })
+    }
+
+    if (checkResult.recordset[0].IdPengguna === req.user.id) {
+      return res.status(400).json({ error: "Tidak dapat menghapus akun sendiri" })
+    }
+
+    // Check if user has events (FK constraint)
+    const eventCheckQuery = "SELECT COUNT(*) as count FROM Event WHERE IdPengguna = ?"
+    const eventCheckResult = await loggedQuery(eventCheckQuery, [userId])
+
+    if (eventCheckResult.recordset[0].count > 0) {
+      return res.status(400).json({
+        error: "Tidak dapat menghapus asisten ini karena masih memiliki event yang terkait",
+        details: `Asisten ini memiliki ${eventCheckResult.recordset[0].count} event. Hapus atau transfer event tersebut terlebih dahulu.`,
+        constraint: "foreign_key",
+      })
+    }
+
+    // Delete user
+    const deleteQuery = "DELETE FROM Pengguna WHERE IdPengguna = ?"
+    const result = await loggedQuery(deleteQuery, [userId])
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "User tidak ditemukan" })
+    }
+
+    console.log(`[DELETE-USER] User deleted successfully: ${userId}`)
+    res.json({ message: "User berhasil dihapus" })
+  } catch (err) {
+    console.error("[DELETE-USER] Database error:", err)
+
+    // Check for specific SQL Server FK constraint errors
+    if (err.message.includes("REFERENCE constraint") || err.message.includes("FOREIGN KEY")) {
+      return res.status(400).json({
+        error: "Tidak dapat menghapus asisten ini karena masih memiliki data yang terkait",
+        details: "Asisten ini memiliki event atau data lain yang masih terhubung. Hapus data terkait terlebih dahulu.",
+        constraint: "foreign_key",
+      })
+    }
 
   const query = `
     SELECT p.Nama as AsistenNama, 
@@ -672,6 +835,7 @@ app.get("/api/reports/monthly-revenue", authenticateToken, async (req, res) => {
     res.json(result.recordset)
   } catch (err) {
     console.error("[MONTHLY-REVENUE] Database error:", err)
+
     return res.status(500).json({ error: "Database error" })
   }
 })
