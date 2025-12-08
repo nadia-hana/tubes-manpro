@@ -1,4 +1,203 @@
-// ------------WP 3.2------------ //
+const express = require("express")
+const sql = require("mssql")
+const cors = require("cors")
+const bcrypt = require("bcryptjs")
+const jwt = require("jsonwebtoken")
+require("dotenv").config()
+
+const app = express()
+const PORT = process.env.PORT || 3000
+
+app.use((req, res, next) => {
+  console.log(`[API] ${new Date().toISOString()} - ${req.method} ${req.path}`)
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log(`[API] Request body:`, req.body)
+  }
+  next()
+})
+
+// Middleware
+app.use(cors())
+app.use(express.json())
+app.use(express.static("public"))
+
+const dbConfig = {
+  server: process.env.DB_HOST || "localhost",
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME || "event_organizer",
+  options: {
+    encrypt: true, // Use encryption
+    trustServerCertificate: true, // For development only
+  },
+}
+
+sql
+  .connect(dbConfig)
+  .then((pool) => {
+    console.log("[DB] Connected to SQL Server database")
+    console.log(`[DB] Database: ${process.env.DB_NAME || "event_organizer"}`)
+    console.log(`[DB] Host: ${process.env.DB_HOST || "localhost"}`)
+  })
+  .catch((err) => {
+    console.error("[DB] Database connection failed:", err)
+  })
+
+const loggedQuery = async (query, params = []) => {
+  console.log(`[DB] Executing query: ${query}`)
+  if (params && params.length > 0) {
+    console.log(`[DB] Query parameters:`, params)
+  }
+
+  const startTime = Date.now()
+  try {
+    const pool = await sql.connect(dbConfig)
+    const request = pool.request()
+
+    // Add parameters to request
+    params.forEach((param, index) => {
+      request.input(`param${index}`, param)
+    })
+
+    // Replace ? with @param0, @param1, etc.
+    let processedQuery = query
+    params.forEach((param, index) => {
+      processedQuery = processedQuery.replace("?", `@param${index}`)
+    })
+
+    const result = await request.query(processedQuery)
+    const duration = Date.now() - startTime
+    console.log(`[DB] Query completed in ${duration}ms`)
+    console.log(
+      `[DB] Query results: ${result.recordset ? result.recordset.length : result.rowsAffected} row(s) affected`,
+    )
+
+    return result
+  } catch (err) {
+    const duration = Date.now() - startTime
+    console.error(`[DB] Query error after ${duration}ms:`, err)
+    throw err
+  }
+}
+
+// JWT Secret
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+
+// Middleware untuk verifikasi token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"]
+  const token = authHeader && authHeader.split(" ")[1]
+
+  console.log(`[AUTH] Token verification for ${req.method} ${req.path}`)
+
+  if (!token) {
+    console.log("[AUTH] No token provided")
+    return res.status(401).json({ error: "Access token required" })
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      console.log("[AUTH] Invalid token:", err.message)
+      return res.status(403).json({ error: "Invalid token" })
+    }
+    console.log(`[AUTH] Token valid for user: ${user.username} (${user.role})`)
+    req.user = user
+    next()
+  })
+}
+
+// Routes
+
+app.post("/api/login", async (req, res) => {
+  const { username, password } = req.body
+  console.log(`[LOGIN] Login attempt for username: ${username}`)
+
+  try {
+    const query = "SELECT * FROM Pengguna WHERE Username = ?"
+    const result = await loggedQuery(query, [username])
+
+    if (result.recordset.length === 0) {
+      console.log(`[LOGIN] User not found: ${username}`)
+      return res.status(401).json({ error: "Username atau password salah" })
+    }
+
+    const user = result.recordset[0]
+    console.log(`[LOGIN] User found: ${user.Username}, Role: ${user.Role}`)
+
+    // Simple password check (in production, use bcrypt)
+    if (password !== user.Password) {
+      console.log(`[LOGIN] Invalid password for user: ${username}`)
+      return res.status(401).json({ error: "Username atau password salah" })
+    }
+
+    const token = jwt.sign(
+      {
+        id: user.IdPengguna,
+        username: user.Username,
+        role: user.Role,
+        nama: user.Nama,
+      },
+      JWT_SECRET,
+      { expiresIn: "24h" },
+    )
+
+    console.log(`[LOGIN] Login successful for ${username}, token generated`)
+    res.json({
+      token,
+      user: {
+        id: user.IdPengguna,
+        nama: user.Nama,
+        username: user.Username,
+        role: user.Role,
+      },
+    })
+  } catch (err) {
+    console.error("[LOGIN] Database error during login:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+app.get("/api/events", authenticateToken, async (req, res) => {
+  console.log(`[EVENTS] Fetching events for user: ${req.user.username} (${req.user.role})`)
+
+  try {
+    let query = `
+      SELECT e.*, je.Nama as JenisEventNama, k.Nama as KlienNama, p.Nama as PenggunaNama
+      FROM Event e
+      LEFT JOIN JenisEvent je ON e.IdJenisEvent = je.IdJenisEvent
+      LEFT JOIN Klien k ON e.IdKlien = k.IdKlien
+      LEFT JOIN Pengguna p ON e.IdPengguna = p.IdPengguna
+    `
+
+    let params = []
+    // Jika asisten, hanya tampilkan event yang ditangani oleh mereka
+    if (req.user.role === "asisten") {
+      query += " WHERE e.IdPengguna = ?"
+      params = [req.user.id]
+    }
+
+    const result = await loggedQuery(query, params)
+    console.log(`[EVENTS] Found ${result.recordset.length} events`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[EVENTS] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get all clients
+app.get("/api/clients", authenticateToken, async (req, res) => {
+  console.log(`[CLIENTS] Fetching clients for user: ${req.user.username}`)
+  const query = "SELECT * FROM Klien"
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[CLIENTS] Found ${result.recordset.length} clients`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[CLIENTS] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
 
 // Get all vendors
 app.get("/api/vendors", authenticateToken, async (req, res) => {
@@ -14,6 +213,97 @@ app.get("/api/vendors", authenticateToken, async (req, res) => {
     res.json(result.recordset)
   } catch (err) {
     console.error("[VENDORS] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get all users (only for owner)
+app.get("/api/users", authenticateToken, async (req, res) => {
+  console.log(`[USERS] Access attempt by: ${req.user.username} (${req.user.role})`)
+
+  if (req.user.role !== "pemilik_usaha") {
+    console.log("[USERS] Access denied - not owner")
+    return res.status(403).json({ error: "Access denied" })
+  }
+
+  const query = "SELECT IdPengguna, Nama, Alamat, NoTelp, Username, Role FROM Pengguna"
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[USERS] Found ${result.recordset.length} users`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[USERS] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get vendor types
+app.get("/api/vendor-types", authenticateToken, async (req, res) => {
+  const query = "SELECT * FROM JenisVendor"
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[VENDOR-TYPES] Found ${result.recordset.length} vendor types`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[VENDOR-TYPES] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get event types
+app.get("/api/event-types", authenticateToken, async (req, res) => {
+  const query = "SELECT * FROM JenisEvent"
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[EVENT-TYPES] Found ${result.recordset.length} event types`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[EVENT-TYPES] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Add new client
+app.post("/api/clients", authenticateToken, async (req, res) => {
+  const { nama, alamat, noTelp, email } = req.body
+  console.log(`[CLIENTS] Adding new client: ${nama} by user: ${req.user.username}`)
+
+  const query = "INSERT INTO Klien (Nama, Alamat, NoTelp, Email) OUTPUT INSERTED.IdKlien VALUES (?, ?, ?, ?)"
+  try {
+    const result = await loggedQuery(query, [nama, alamat, noTelp, email])
+    console.log(`[CLIENTS] Client added successfully with ID: ${result.recordset[0].IdKlien}`)
+    res.json({ message: "Klien berhasil ditambahkan", id: result.recordset[0].IdKlien })
+  } catch (err) {
+    console.error("[CLIENTS] Error adding client:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Add new event
+app.post("/api/events", authenticateToken, async (req, res) => {
+  const { nama, tglEvent, jumlahUndangan, budgetEvent, idJenisEvent, idKlien } = req.body
+  console.log(`[EVENTS] Adding new event: ${nama} by user: ${req.user.username}`)
+
+  const query = `
+    INSERT INTO Event (Nama, TglEvent, JumlahUndangan, BudgetEvent, StatusEvent, IdJenisEvent, IdKlien, IdPengguna) 
+    OUTPUT INSERTED.IdEvent
+    VALUES (?, ?, ?, ?, 'On Progress', ?, ?, ?)
+  `
+
+  try {
+    const result = await loggedQuery(query, [
+      nama,
+      tglEvent,
+      jumlahUndangan,
+      budgetEvent,
+      idJenisEvent,
+      idKlien,
+      req.user.id,
+    ])
+    console.log(`[EVENTS] Event added successfully with ID: ${result.recordset[0].IdEvent}`)
+    res.json({ message: "Event berhasil ditambahkan", id: result.recordset[0].IdEvent })
+  } catch (err) {
+    console.error("[EVENTS] Error adding event:", err)
     return res.status(500).json({ error: "Database error" })
   }
 })
@@ -38,33 +328,397 @@ app.post("/api/vendors", authenticateToken, async (req, res) => {
   }
 })
 
+// Get event budget details
+app.get("/api/events/:id/budget", authenticateToken, async (req, res) => {
+  const eventId = req.params.id
 
-// Update vendor (only for owner)
-app.put("/api/vendors/:id", authenticateToken, async (req, res) => {
+  const query = `
+    SELECT ev.*, v.Nama as VendorNama, jv.Nama as JenisVendorNama
+    FROM EventVendor ev
+    LEFT JOIN Vendor v ON ev.IdVendor = v.IdVendor
+    LEFT JOIN JenisVendor jv ON v.IdJenisVendor = jv.IdJenisVendor
+    WHERE ev.IdEvent = ?
+  `
+
+  try {
+    const result = await loggedQuery(query, [eventId])
+    console.log(`[EVENT-BUDGET] Found ${result.recordset.length} budget details for event ID: ${eventId}`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[EVENT-BUDGET] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get vendor usage statistics for analytics
+app.get("/api/vendor-usage-stats", authenticateToken, async (req, res) => {
   if (req.user.role !== "pemilik_usaha") {
     return res.status(403).json({ error: "Access denied" })
   }
 
-  const vendorId = req.params.id
-  const { nama, namaPemilik, alamat, noTelp, harga, idJenisVendor } = req.body
-  console.log(`[UPDATE-VENDOR] Updating vendor ID: ${vendorId} by owner: ${req.user.username}`)
+  console.log("[VENDOR-STATS] Fetching vendor usage statistics")
+
+  const query = `
+    SELECT 
+      v.Nama as VendorNama,
+      jv.Nama as JenisVendor,
+      COUNT(ev.IdVendor) as JumlahPenggunaan,
+      AVG(ev.HargaDealing) as RataRataHarga
+    FROM Vendor v
+    LEFT JOIN JenisVendor jv ON v.IdJenisVendor = jv.IdJenisVendor
+    LEFT JOIN EventVendor ev ON v.IdVendor = ev.IdVendor
+    GROUP BY v.IdVendor, v.Nama, jv.Nama
+    HAVING COUNT(ev.IdVendor) > 0
+    ORDER BY JumlahPenggunaan DESC, RataRataHarga DESC
+  `
 
   try {
-    const updateQuery = `
-      UPDATE Vendor 
-      SET Nama = ?, NamaPemilik = ?, Alamat = ?, NoTelp = ?, Harga = ?, IdJenisVendor = ?
-      WHERE IdVendor = ?
-    `
-    const result = await loggedQuery(updateQuery, [nama, namaPemilik, alamat, noTelp, harga, idJenisVendor, vendorId])
+    const result = await loggedQuery(query, [])
+    console.log(`[VENDOR-STATS] Found ${result.recordset.length} vendor usage statistics`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[VENDOR-STATS] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
 
+// Add new user (only for owner)
+app.post("/api/users", authenticateToken, async (req, res) => {
+  if (req.user.role !== "pemilik_usaha") {
+    return res.status(403).json({ error: "Access denied" })
+  }
+
+  const { nama, alamat, noTelp, username, password } = req.body
+
+  const query =
+    "INSERT INTO Pengguna (Nama, Alamat, NoTelp, Username, Password, Role) OUTPUT INSERTED.IdPengguna VALUES (?, ?, ?, ?, ?, ?)"
+  try {
+    const result = await loggedQuery(query, [nama, alamat, noTelp, username, password, "asisten"])
+    console.log(`[USERS] User added successfully with ID: ${result.recordset[0].IdPengguna}`)
+    res.json({ message: "Karyawan berhasil ditambahkan", id: result.recordset[0].IdPengguna })
+  } catch (err) {
+    console.error("[USERS] Error adding user:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get vendor popularity report
+app.get("/api/reports/vendor-popularity", authenticateToken, async (req, res) => {
+  if (req.user.role !== "pemilik_usaha") {
+    return res.status(403).json({ error: "Access denied" })
+  }
+
+  const query = `
+    SELECT v.Nama, v.NamaPemilik, jv.Nama as JenisVendorNama, 
+           COUNT(ev.IdVendor) as JumlahPenggunaan,
+           SUM(ev.HargaDealing) as TotalPendapatan
+    FROM Vendor v
+    LEFT JOIN JenisVendor jv ON v.IdJenisVendor = jv.IdJenisVendor
+    LEFT JOIN EventVendor ev ON v.IdVendor = ev.IdVendor
+    GROUP BY v.IdVendor
+    ORDER BY JumlahPenggunaan DESC, TotalPendapatan DESC
+  `
+
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[VENDOR-POPULARITY] Found ${result.recordset.length} vendor popularity reports`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[VENDOR-POPULARITY] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get events per assistant report
+app.get("/api/reports/events-per-assistant", authenticateToken, async (req, res) => {
+  if (req.user.role !== "pemilik_usaha") {
+    return res.status(403).json({ error: "Access denied" })
+  }
+
+  const query = `
+    SELECT p.Nama as AsistenNama, 
+           COUNT(e.IdEvent) as JumlahEvent,
+           COUNT(CASE WHEN e.StatusEvent = 'Selesai' THEN 1 END) as EventSelesai,
+           COUNT(CASE WHEN e.StatusEvent = 'On Progress' THEN 1 END) as EventBerlangsung,
+           SUM(e.BudgetEvent) as TotalBudget
+    FROM Pengguna p
+    LEFT JOIN Event e ON p.IdPengguna = e.IdPengguna
+    WHERE p.Role = 'asisten'
+    GROUP BY p.IdPengguna
+    ORDER BY JumlahEvent DESC
+  `
+
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[EVENTS-PER-ASSISTANT] Found ${result.recordset.length} events per assistant reports`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[EVENTS-PER-ASSISTANT] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get monthly revenue report
+app.get("/api/reports/monthly-revenue", authenticateToken, async (req, res) => {
+  if (req.user.role !== "pemilik_usaha") {
+    return res.status(403).json({ error: "Access denied" })
+  }
+
+  const query = `
+    SELECT 
+      YEAR(e.TglEvent) as Tahun,
+      MONTH(e.TglEvent) as Bulan,
+      FORMAT(e.TglEvent, 'MMMM') as NamaBulan,
+      COUNT(e.IdEvent) as JumlahEvent,
+      SUM(e.BudgetEvent) as TotalBudget,
+      COUNT(CASE WHEN e.StatusEvent = 'Selesai' THEN 1 END) as EventSelesai
+    FROM Event e
+    WHERE e.TglEvent >= DATEADD(year, -1, GETDATE())
+    GROUP BY YEAR(e.TglEvent), MONTH(e.TglEvent)
+    ORDER BY Tahun DESC, Bulan DESC
+  `
+
+  try {
+    const result = await loggedQuery(query, [])
+    console.log(`[MONTHLY-REVENUE] Found ${result.recordset.length} monthly revenue reports`)
+    res.json(result.recordset)
+  } catch (err) {
+    console.error("[MONTHLY-REVENUE] Database error:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Update event status
+app.put("/api/events/:id/status", authenticateToken, async (req, res) => {
+  const eventId = req.params.id
+  const { status } = req.body
+
+  // Check if user owns this event (for assistants) or is owner
+  let query = "UPDATE Event SET StatusEvent = ? WHERE IdEvent = ?"
+  const params = [status, eventId]
+
+  if (req.user.role === "asisten") {
+    query += " AND IdPengguna = ?"
+    params.push(req.user.id)
+  }
+
+  try {
+    const result = await loggedQuery(query, params)
     if (result.rowsAffected[0] === 0) {
-      return res.status(404).json({ error: "Vendor tidak ditemukan" })
+      console.log("[EVENT-STATUS] Event not found or no access")
+      return res.status(404).json({ error: "Event tidak ditemukan atau tidak memiliki akses" })
     }
 
-    console.log(`[UPDATE-VENDOR] Vendor updated successfully: ${vendorId}`)
-    res.json({ message: "Vendor berhasil diperbarui" })
+    console.log("[EVENT-STATUS] Event status updated successfully")
+    res.json({ message: "Status event berhasil diupdate" })
   } catch (err) {
-    console.error("[UPDATE-VENDOR] Database error:", err)
+    console.error("[EVENT-STATUS] Error updating event status:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Add vendor to event
+app.post("/api/events/:id/vendors", authenticateToken, async (req, res) => {
+  const eventId = req.params.id
+  const { idVendor, hargaDealing } = req.body
+
+  // Check if user owns this event (for assistants) or is owner
+  let checkQuery = "SELECT * FROM Event WHERE IdEvent = ?"
+  const checkParams = [eventId]
+
+  if (req.user.role === "asisten") {
+    checkQuery += " AND IdPengguna = ?"
+    checkParams.push(req.user.id)
+  }
+
+  try {
+    const checkResult = await loggedQuery(checkQuery, checkParams)
+    if (checkResult.recordset.length === 0) {
+      console.log("[EVENT-VENDOR] Event not found or no access")
+      return res.status(404).json({ error: "Event tidak ditemukan atau tidak memiliki akses" })
+    }
+
+    const mergeQuery = `
+      MERGE EventVendor AS target
+      USING (SELECT ? AS IdEvent, ? AS IdVendor, ? AS HargaDealing) AS source
+      ON (target.IdEvent = source.IdEvent AND target.IdVendor = source.IdVendor)
+      WHEN MATCHED THEN
+        UPDATE SET HargaDealing = source.HargaDealing
+      WHEN NOT MATCHED THEN
+        INSERT (IdEvent, IdVendor, HargaDealing)
+        VALUES (source.IdEvent, source.IdVendor, source.HargaDealing);
+    `
+    const mergeParams = [eventId, idVendor, hargaDealing]
+    await loggedQuery(mergeQuery, mergeParams)
+    console.log("[EVENT-VENDOR] Vendor added to event successfully")
+    res.json({ message: "Vendor berhasil ditambahkan ke event" })
+  } catch (err) {
+    console.error("[EVENT-VENDOR] Error adding vendor to event:", err)
+    return res.status(500).json({ error: "Database error", message: err.message })
+  }
+})
+
+// Remove vendor from event
+app.delete("/api/events/:eventId/vendors/:vendorId", authenticateToken, async (req, res) => {
+  const { eventId, vendorId } = req.params
+
+  // Check if user owns this event (for assistants) or is owner
+  let checkQuery = "SELECT * FROM Event WHERE IdEvent = ?"
+  const checkParams = [eventId]
+
+  if (req.user.role === "asisten") {
+    checkQuery += " AND IdPengguna = ?"
+    checkParams.push(req.user.id)
+  }
+
+  try {
+    const checkResult = await loggedQuery(checkQuery, checkParams)
+    if (checkResult.recordset.length === 0) {
+      console.log("[EVENT-VENDOR] Event not found or no access")
+      return res.status(404).json({ error: "Event tidak ditemukan atau tidak memiliki akses" })
+    }
+
+    // Remove vendor from event
+    const deleteQuery = "DELETE FROM EventVendor WHERE IdEvent = ? AND IdVendor = ?"
+    const deleteParams = [eventId, vendorId]
+    const deleteResult = await loggedQuery(deleteQuery, deleteParams)
+    console.log("[EVENT-VENDOR] Vendor removed from event successfully")
+    res.json({ message: "Vendor berhasil dihapus dari event" })
+  } catch (err) {
+    console.error("[EVENT-VENDOR] Error removing vendor from event:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Complete event
+app.put("/api/events/:id/complete", authenticateToken, async (req, res) => {
+  const eventId = req.params.id
+
+  // Check if user owns this event (for assistants) or is owner
+  let query = "UPDATE Event SET StatusEvent = 'Selesai' WHERE IdEvent = ?"
+  const params = [eventId]
+
+  if (req.user.role === "asisten") {
+    query += " AND IdPengguna = ?"
+    params.push(req.user.id)
+  }
+
+  try {
+    const result = await loggedQuery(query, params)
+    if (result.rowsAffected[0] === 0) {
+      console.log("[EVENT-COMPLETE] Event not found or no access")
+      return res.status(404).json({ error: "Event tidak ditemukan atau tidak memiliki akses" })
+    }
+
+    console.log("[EVENT-COMPLETE] Event completed successfully")
+    res.json({ message: "Event berhasil diselesaikan" })
+  } catch (err) {
+    console.error("[EVENT-COMPLETE] Error completing event:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+// Get dashboard statistics
+app.get("/api/dashboard/stats", authenticateToken, async (req, res) => {
+  console.log(`[DASHBOARD] Fetching stats for user: ${req.user.username} (${req.user.role})`)
+
+  const queries = {
+    totalEvents: "SELECT COUNT(*) as count FROM Event",
+    totalVendors: "SELECT COUNT(*) as count FROM Vendor",
+    totalClients: "SELECT COUNT(*) as count FROM Klien",
+    totalAssistants: 'SELECT COUNT(*) as count FROM Pengguna WHERE Role = "asisten"',
+    completedEvents: 'SELECT COUNT(*) as count FROM Event WHERE StatusEvent = "Selesai"',
+    ongoingEvents: 'SELECT COUNT(*) as count FROM Event WHERE StatusEvent = "On Progress"',
+  }
+
+  // If assistant, filter events by user
+  if (req.user.role === "asisten") {
+    console.log("[DASHBOARD] Filtering stats for assistant")
+    queries.totalEvents = "SELECT COUNT(*) as count FROM Event WHERE IdPengguna = ?"
+    queries.completedEvents = 'SELECT COUNT(*) as count FROM Event WHERE StatusEvent = "Selesai" AND IdPengguna = ?'
+    queries.ongoingEvents = 'SELECT COUNT(*) as count FROM Event WHERE StatusEvent = "On Progress" AND IdPengguna = ?'
+  }
+
+  const stats = {}
+  const queryKeys = Object.keys(queries)
+  let completed = 0
+
+  queryKeys.forEach(async (key) => {
+    const params = req.user.role === "asisten" && key.includes("Events") ? [req.user.id] : []
+
+    try {
+      const result = await loggedQuery(queries[key], params)
+      stats[key] = result.recordset ? result.recordset[0].count : result.rowsAffected[0]
+      console.log(`[DASHBOARD] ${key}: ${stats[key]}`)
+    } catch (err) {
+      console.error(`[DASHBOARD] Error in ${key} query:`, err)
+      stats[key] = 0
+    }
+
+    completed++
+    if (completed === queryKeys.length) {
+      console.log("[DASHBOARD] All stats collected, sending response")
+      res.json(stats)
+    }
+  })
+})
+
+// Delete user (only for owner)
+app.delete("/api/users/:id", authenticateToken, async (req, res) => {
+  if (req.user.role !== "pemilik_usaha") {
+    return res.status(403).json({ error: "Access denied" })
+  }
+
+  const userId = req.params.id
+  console.log(`[DELETE-USER] Deleting user ID: ${userId} by owner: ${req.user.username}`)
+
+  try {
+    // Check if user exists and is not the current user
+    const checkQuery = "SELECT * FROM Pengguna WHERE IdPengguna = ?"
+    const checkResult = await loggedQuery(checkQuery, [userId])
+
+    if (checkResult.recordset.length === 0) {
+      return res.status(404).json({ error: "User tidak ditemukan" })
+    }
+
+    if (checkResult.recordset[0].IdPengguna === req.user.id) {
+      return res.status(400).json({ error: "Tidak dapat menghapus akun sendiri" })
+    }
+
+    // Check if user has events (FK constraint)
+    const eventCheckQuery = "SELECT COUNT(*) as count FROM Event WHERE IdPengguna = ?"
+    const eventCheckResult = await loggedQuery(eventCheckQuery, [userId])
+
+    if (eventCheckResult.recordset[0].count > 0) {
+      return res.status(400).json({
+        error: "Tidak dapat menghapus asisten ini karena masih memiliki event yang terkait",
+        details: `Asisten ini memiliki ${eventCheckResult.recordset[0].count} event. Hapus atau transfer event tersebut terlebih dahulu.`,
+        constraint: "foreign_key",
+      })
+    }
+
+    // Delete user
+    const deleteQuery = "DELETE FROM Pengguna WHERE IdPengguna = ?"
+    const result = await loggedQuery(deleteQuery, [userId])
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "User tidak ditemukan" })
+    }
+
+    console.log(`[DELETE-USER] User deleted successfully: ${userId}`)
+    res.json({ message: "User berhasil dihapus" })
+  } catch (err) {
+    console.error("[DELETE-USER] Database error:", err)
+
+    // Check for specific SQL Server FK constraint errors
+    if (err.message.includes("REFERENCE constraint") || err.message.includes("FOREIGN KEY")) {
+      return res.status(400).json({
+        error: "Tidak dapat menghapus asisten ini karena masih memiliki data yang terkait",
+        details: "Asisten ini memiliki event atau data lain yang masih terhubung. Hapus data terkait terlebih dahulu.",
+        constraint: "foreign_key",
+      })
+    }
+
     return res.status(500).json({ error: "Database error" })
   }
 })
@@ -117,83 +771,6 @@ app.delete("/api/vendors/:id", authenticateToken, async (req, res) => {
   }
 })
 
-// Get vendor types
-app.get("/api/vendor-types", authenticateToken, async (req, res) => {
-  const query = "SELECT * FROM JenisVendor"
-  try {
-    const result = await loggedQuery(query, [])
-    console.log(`[VENDOR-TYPES] Found ${result.recordset.length} vendor types`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[VENDOR-TYPES] Database error:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
-// Get vendor usage statistics for analytics
-app.get("/api/vendor-usage-stats", authenticateToken, async (req, res) => {
-  if (req.user.role !== "pemilik_usaha") {
-    return res.status(403).json({ error: "Access denied" })
-  }
-
-  console.log("[VENDOR-STATS] Fetching vendor usage statistics")
-
-  const query = `
-    SELECT 
-      v.Nama as VendorNama,
-      jv.Nama as JenisVendor,
-      COUNT(ev.IdVendor) as JumlahPenggunaan,
-      AVG(ev.HargaDealing) as RataRataHarga
-    FROM Vendor v
-    LEFT JOIN JenisVendor jv ON v.IdJenisVendor = jv.IdJenisVendor
-    LEFT JOIN EventVendor ev ON v.IdVendor = ev.IdVendor
-    GROUP BY v.IdVendor, v.Nama, jv.Nama
-    HAVING COUNT(ev.IdVendor) > 0
-    ORDER BY JumlahPenggunaan DESC, RataRataHarga DESC
-  `
-
-  try {
-    const result = await loggedQuery(query, [])
-    console.log(`[VENDOR-STATS] Found ${result.recordset.length} vendor usage statistics`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[VENDOR-STATS] Database error:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
-
-//-------------WP 3.1 ----------- //
-// Get all clients
-app.get("/api/clients", authenticateToken, async (req, res) => {
-  console.log(`[CLIENTS] Fetching clients for user: ${req.user.username}`)
-  const query = "SELECT * FROM Klien"
-  try {
-    const result = await loggedQuery(query, [])
-    console.log(`[CLIENTS] Found ${result.recordset.length} clients`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[CLIENTS] Database error:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
-// Add new client
-app.post("/api/clients", authenticateToken, async (req, res) => {
-  const { nama, alamat, noTelp, email } = req.body
-  console.log(`[CLIENTS] Adding new client: ${nama} by user: ${req.user.username}`)
-
-  const query = "INSERT INTO Klien (Nama, Alamat, NoTelp, Email) OUTPUT INSERTED.IdKlien VALUES (?, ?, ?, ?)"
-  try {
-    const result = await loggedQuery(query, [nama, alamat, noTelp, email])
-    console.log(`[CLIENTS] Client added successfully with ID: ${result.recordset[0].IdKlien}`)
-    res.json({ message: "Klien berhasil ditambahkan", id: result.recordset[0].IdKlien })
-  } catch (err) {
-    console.error("[CLIENTS] Error adding client:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
 // Delete client (for assistants)
 app.delete("/api/clients/:id", authenticateToken, async (req, res) => {
   const clientId = req.params.id
@@ -238,63 +815,7 @@ app.delete("/api/clients/:id", authenticateToken, async (req, res) => {
   }
 })
 
-//3.3
-app.get("/api/events", authenticateToken, async (req, res) => {
-  console.log(`[EVENTS] Fetching events for user: ${req.user.username} (${req.user.role})`)
-
-  try {
-    let query = `
-      SELECT e.*, je.Nama as JenisEventNama, k.Nama as KlienNama, p.Nama as PenggunaNama
-      FROM Event e
-      LEFT JOIN JenisEvent je ON e.IdJenisEvent = je.IdJenisEvent
-      LEFT JOIN Klien k ON e.IdKlien = k.IdKlien
-      LEFT JOIN Pengguna p ON e.IdPengguna = p.IdPengguna
-    `
-
-    let params = []
-    // Jika asisten, hanya tampilkan event yang ditangani oleh mereka
-    if (req.user.role === "asisten") {
-      query += " WHERE e.IdPengguna = ?"
-      params = [req.user.id]
-    }
-
-    const result = await loggedQuery(query, params)
-    console.log(`[EVENTS] Found ${result.recordset.length} events`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[EVENTS] Database error:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
-app.post("/api/events", authenticateToken, async (req, res) => {
-  const { nama, tglEvent, jumlahUndangan, budgetEvent, idJenisEvent, idKlien } = req.body
-  console.log(`[EVENTS] Adding new event: ${nama} by user: ${req.user.username}`)
-
-  const query = `
-    INSERT INTO Event (Nama, TglEvent, JumlahUndangan, BudgetEvent, StatusEvent, IdJenisEvent, IdKlien, IdPengguna) 
-    OUTPUT INSERTED.IdEvent
-    VALUES (?, ?, ?, ?, 'On Progress', ?, ?, ?)
-  `
-
-  try {
-    const result = await loggedQuery(query, [
-      nama,
-      tglEvent,
-      jumlahUndangan,
-      budgetEvent,
-      idJenisEvent,
-      idKlien,
-      req.user.id,
-    ])
-    console.log(`[EVENTS] Event added successfully with ID: ${result.recordset[0].IdEvent}`)
-    res.json({ message: "Event berhasil ditambahkan", id: result.recordset[0].IdEvent })
-  } catch (err) {
-    console.error("[EVENTS] Error adding event:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
+// Delete event (for assistants - only their own events)
 app.delete("/api/events/:id", authenticateToken, async (req, res) => {
   const eventId = req.params.id
   console.log(`[DELETE-EVENT] Deleting event ID: ${eventId} by user: ${req.user.username}`)
@@ -345,497 +866,153 @@ app.delete("/api/events/:id", authenticateToken, async (req, res) => {
   }
 })
 
-// Update event status
-app.put("/api/events/:id/status", authenticateToken, async (req, res) => {
-  const eventId = req.params.id
-  const { status } = req.body
-
-  // Check if user owns this event (for assistants) or is owner
-  let query = "UPDATE Event SET StatusEvent = ? WHERE IdEvent = ?"
-  const params = [status, eventId]
-
-  if (req.user.role === "asisten") {
-    query += " AND IdPengguna = ?"
-    params.push(req.user.id)
+// Update vendor (only for owner)
+app.put("/api/vendors/:id", authenticateToken, async (req, res) => {
+  if (req.user.role !== "pemilik_usaha") {
+    return res.status(403).json({ error: "Access denied" })
   }
+
+  const vendorId = req.params.id
+  const { nama, namaPemilik, alamat, noTelp, harga, idJenisVendor } = req.body
+  console.log(`[UPDATE-VENDOR] Updating vendor ID: ${vendorId} by owner: ${req.user.username}`)
 
   try {
-    const result = await loggedQuery(query, params)
-    if (result.rowsAffected[0] === 0) {
-      console.log("[EVENT-STATUS] Event not found or no access")
-      return res.status(404).json({ error: "Event tidak ditemukan atau tidak memiliki akses" })
-    }
-
-    console.log("[EVENT-STATUS] Event status updated successfully")
-    res.json({ message: "Status event berhasil diupdate" })
-  } catch (err) {
-    console.error("[EVENT-STATUS] Error updating event status:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
-
-// Complete event
-app.put("/api/events/:id/complete", authenticateToken, async (req, res) => {
-  const eventId = req.params.id
-
-  // Check if user owns this event (for assistants) or is owner
-  let query = "UPDATE Event SET StatusEvent = 'Selesai' WHERE IdEvent = ?"
-  const params = [eventId]
-
-  if (req.user.role === "asisten") {
-    query += " AND IdPengguna = ?"
-    params.push(req.user.id)
-  }
-
-  try {
-    const result = await loggedQuery(query, params)
-    if (result.rowsAffected[0] === 0) {
-      console.log("[EVENT-COMPLETE] Event not found or no access")
-      return res.status(404).json({ error: "Event tidak ditemukan atau tidak memiliki akses" })
-    }
-
-    console.log("[EVENT-COMPLETE] Event completed successfully")
-    res.json({ message: "Event berhasil diselesaikan" })
-  } catch (err) {
-    console.error("[EVENT-COMPLETE] Error completing event:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
-// Get event types
-app.get("/api/event-types", authenticateToken, async (req, res) => {
-  const query = "SELECT * FROM JenisEvent"
-  try {
-    const result = await loggedQuery(query, [])
-    console.log(`[EVENT-TYPES] Found ${result.recordset.length} event types`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[EVENT-TYPES] Database error:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
-
-const jwt = require("jsonwebtoken")
-
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"]
-  const token = authHeader && authHeader.split(" ")[1]
-
-  console.log(`[AUTH] Token verification for ${req.method} ${req.path}`)
-
-  if (!token) {
-    console.log("[AUTH] No token provided")
-    return res.status(401).json({ error: "Access token required" })
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      console.log("[AUTH] Invalid token:", err.message)
-      return res.status(403).json({ error: "Invalid token" })
-    }
-    console.log(`[AUTH] Token valid for user: ${user.username} (${user.role})`)
-    req.user = user
-    next()
-  })
-}
-
-app.post("/api/login", async (req, res) => {
-  const { username, password } = req.body
-  console.log(`[LOGIN] Login attempt for username: ${username}`)
-
-  try {
-    const query = "SELECT * FROM Pengguna WHERE Username = ?"
-    const result = await loggedQuery(query, [username])
-
-    if (result.recordset.length === 0) {
-      console.log(`[LOGIN] User not found: ${username}`)
-      return res.status(401).json({ error: "Username atau password salah" })
-    }
-
-    const user = result.recordset[0]
-    console.log(`[LOGIN] User found: ${user.Username}, Role: ${user.Role}`)
-
-    // Simple password check (in production, use bcrypt)
-    if (password !== user.Password) {
-      console.log(`[LOGIN] Invalid password for user: ${username}`)
-      return res.status(401).json({ error: "Username atau password salah" })
-    }
-
-    const token = jwt.sign(
-      {
-        id: user.IdPengguna,
-        username: user.Username,
-        role: user.Role,
-        nama: user.Nama,
-      },
-      JWT_SECRET,
-      { expiresIn: "24h" },
-    )
-
-    console.log(`[LOGIN] Login successful for ${username}, token generated`)
-    res.json({
-      token,
-      user: {
-        id: user.IdPengguna,
-        nama: user.Nama,
-        username: user.Username,
-        role: user.Role,
-      },
-    })
-  } catch (err) {
-    console.error("[LOGIN] Database error during login:", err)
-
-// ==== WP 3. 4 ==== //
-// Get event budget details
-app.get("/api/events/:id/budget", authenticateToken, async (req, res) => {
-  const eventId = req.params.id
-
-  const query = `
-    SELECT ev.*, v.Nama as VendorNama, jv.Nama as JenisVendorNama
-    FROM EventVendor ev
-    LEFT JOIN Vendor v ON ev.IdVendor = v.IdVendor
-    LEFT JOIN JenisVendor jv ON v.IdJenisVendor = jv.IdJenisVendor
-    WHERE ev.IdEvent = ?
-  `
-
-  try {
-    const result = await loggedQuery(query, [eventId])
-    console.log(`[EVENT-BUDGET] Found ${result.recordset.length} budget details for event ID: ${eventId}`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[EVENT-BUDGET] Database error:", err)
-    return res.status(500).json({ error: "Database error" })
-  }
-})
-
-
-app.post("/api/events/:id/vendors", authenticateToken, async (req, res) => {
-  const eventId = req.params.id
-  const { idVendor, hargaDealing } = req.body
-
-  // Check if user owns this event (for assistants) or is owner
-  let checkQuery = "SELECT * FROM Event WHERE IdEvent = ?"
-  const checkParams = [eventId]
-
-  if (req.user.role === "asisten") {
-    checkQuery += " AND IdPengguna = ?"
-    checkParams.push(req.user.id)
-  }
-
-  try {
-    const checkResult = await loggedQuery(checkQuery, checkParams)
-    if (checkResult.recordset.length === 0) {
-      console.log("[EVENT-VENDOR] Event not found or no access")
-      return res.status(404).json({ error: "Event tidak ditemukan atau tidak memiliki akses" })
-    }
-
-    const mergeQuery = `
-      MERGE EventVendor AS target
-      USING (SELECT ? AS IdEvent, ? AS IdVendor, ? AS HargaDealing) AS source
-      ON (target.IdEvent = source.IdEvent AND target.IdVendor = source.IdVendor)
-      WHEN MATCHED THEN
-        UPDATE SET HargaDealing = source.HargaDealing
-      WHEN NOT MATCHED THEN
-        INSERT (IdEvent, IdVendor, HargaDealing)
-        VALUES (source.IdEvent, source.IdVendor, source.HargaDealing);
+    const updateQuery = `
+      UPDATE Vendor 
+      SET Nama = ?, NamaPemilik = ?, Alamat = ?, NoTelp = ?, Harga = ?, IdJenisVendor = ?
+      WHERE IdVendor = ?
     `
-    const mergeParams = [eventId, idVendor, hargaDealing]
-    await loggedQuery(mergeQuery, mergeParams)
-    console.log("[EVENT-VENDOR] Vendor added to event successfully")
-    res.json({ message: "Vendor berhasil ditambahkan ke event" })
-  } catch (err) {
-    console.error("[EVENT-VENDOR] Error adding vendor to event:", err)
-    return res.status(500).json({ error: "Database error", message: err.message })
-  }
-})
+    const result = await loggedQuery(updateQuery, [nama, namaPemilik, alamat, noTelp, harga, idJenisVendor, vendorId])
 
-
-// Remove vendor from event
-app.delete("/api/events/:eventId/vendors/:vendorId", authenticateToken, async (req, res) => {
-  const { eventId, vendorId } = req.params
-
-  // Check if user owns this event (for assistants) or is owner
-  let checkQuery = "SELECT * FROM Event WHERE IdEvent = ?"
-  const checkParams = [eventId]
-
-  if (req.user.role === "asisten") {
-    checkQuery += " AND IdPengguna = ?"
-    checkParams.push(req.user.id)
-  }
-
-  try {
-    const checkResult = await loggedQuery(checkQuery, checkParams)
-    if (checkResult.recordset.length === 0) {
-      console.log("[EVENT-VENDOR] Event not found or no access")
-      return res.status(404).json({ error: "Event tidak ditemukan atau tidak memiliki akses" })
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "Vendor tidak ditemukan" })
     }
 
-    // Remove vendor from event
-    const deleteQuery = "DELETE FROM EventVendor WHERE IdEvent = ? AND IdVendor = ?"
-    const deleteParams = [eventId, vendorId]
-    const deleteResult = await loggedQuery(deleteQuery, deleteParams)
-    console.log("[EVENT-VENDOR] Vendor removed from event successfully")
-    res.json({ message: "Vendor berhasil dihapus dari event" })
+    console.log(`[UPDATE-VENDOR] Vendor updated successfully: ${vendorId}`)
+    res.json({ message: "Vendor berhasil diperbarui" })
   } catch (err) {
-    console.error("[EVENT-VENDOR] Error removing vendor from event:", err)
-
+    console.error("[UPDATE-VENDOR] Database error:", err)
     return res.status(500).json({ error: "Database error" })
   }
 })
 
-
-// Get all users (only for owner)
-app.get("/api/users", authenticateToken, async (req, res) => {
-  console.log(`[USERS] Access attempt by: ${req.user.username} (${req.user.role})`)
-
-  if (req.user.role !== "pemilik_usaha") {
-    console.log("[USERS] Access denied - not owner")
-    return res.status(403).json({ error: "Access denied" })
-  }
-
-  const query = "SELECT IdPengguna, Nama, Alamat, NoTelp, Username, Role FROM Pengguna"
-  try {
-    const result = await loggedQuery(query, [])
-    console.log(`[USERS] Found ${result.recordset.length} users`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[USERS] Database error:", err)
-
-// Get dashboard statistics
-app.get("/api/dashboard/stats", authenticateToken, async (req, res) => {
-  console.log(`[DASHBOARD] Fetching stats for user: ${req.user.username} (${req.user.role})`)
-
-  const queries = {
-    totalEvents: "SELECT COUNT(*) as count FROM Event",
-    totalVendors: "SELECT COUNT(*) as count FROM Vendor",
-    totalClients: "SELECT COUNT(*) as count FROM Klien",
-    totalAssistants: 'SELECT COUNT(*) as count FROM Pengguna WHERE Role = "asisten"',
-    completedEvents: 'SELECT COUNT(*) as count FROM Event WHERE StatusEvent = "Selesai"',
-    ongoingEvents: 'SELECT COUNT(*) as count FROM Event WHERE StatusEvent = "On Progress"',
-  }
-
-  // If assistant, filter events by user
-  if (req.user.role === "asisten") {
-    console.log("[DASHBOARD] Filtering stats for assistant")
-    queries.totalEvents = "SELECT COUNT(*) as count FROM Event WHERE IdPengguna = ?"
-    queries.completedEvents = 'SELECT COUNT(*) as count FROM Event WHERE StatusEvent = "Selesai" AND IdPengguna = ?'
-    queries.ongoingEvents = 'SELECT COUNT(*) as count FROM Event WHERE StatusEvent = "On Progress" AND IdPengguna = ?'
-  }
-
-  const stats = {}
-  const queryKeys = Object.keys(queries)
-  let completed = 0
-
-  queryKeys.forEach(async (key) => {
-    const params = req.user.role === "asisten" && key.includes("Events") ? [req.user.id] : []
-
-    try {
-      const result = await loggedQuery(queries[key], params)
-      stats[key] = result.recordset ? result.recordset[0].count : result.rowsAffected[0]
-      console.log(`[DASHBOARD] ${key}: ${stats[key]}`)
-    } catch (err) {
-      console.error(`[DASHBOARD] Error in ${key} query:`, err)
-      stats[key] = 0
-    }
-
-    completed++
-    if (completed === queryKeys.length) {
-      console.log("[DASHBOARD] All stats collected, sending response")
-      res.json(stats)
-    }
-  })
-})
-
-
-// Get vendor popularity report
-app.get("/api/reports/vendor-popularity", authenticateToken, async (req, res) => {
+app.post("/api/vendor-types", authenticateToken, async (req, res) => {
   if (req.user.role !== "pemilik_usaha") {
     return res.status(403).json({ error: "Access denied" })
   }
 
-  const query = `
-    SELECT v.Nama, v.NamaPemilik, jv.Nama as JenisVendorNama, 
-           COUNT(ev.IdVendor) as JumlahPenggunaan,
-           SUM(ev.HargaDealing) as TotalPendapatan
-    FROM Vendor v
-    LEFT JOIN JenisVendor jv ON v.IdJenisVendor = jv.IdJenisVendor
-    LEFT JOIN EventVendor ev ON v.IdVendor = ev.IdVendor
-    GROUP BY v.IdVendor
-    ORDER BY JumlahPenggunaan DESC, TotalPendapatan DESC
-  `
+  const { nama } = req.body
+  console.log(`[VENDOR-TYPES] Adding new vendor type: ${nama}`)
 
   try {
-    const result = await loggedQuery(query, [])
-    console.log(`[VENDOR-POPULARITY] Found ${result.recordset.length} vendor popularity reports`)
-    res.json(result.recordset)
+    const query = "INSERT INTO JenisVendor (Nama) OUTPUT INSERTED.IdJenisVendor VALUES (?)"
+    const result = await loggedQuery(query, [nama])
+    console.log(`[VENDOR-TYPES] Vendor type added successfully`)
+    res.json({ message: "Jenis vendor berhasil ditambahkan", id: result.recordset[0].IdJenisVendor })
   } catch (err) {
-    console.error("[VENDOR-POPULARITY] Database error:", err)
+    console.error("[VENDOR-TYPES] Error adding vendor type:", err)
     return res.status(500).json({ error: "Database error" })
   }
 })
 
-
-// Add new user (only for owner)
-app.post("/api/users", authenticateToken, async (req, res) => {
-
-// Get events per assistant report
-app.get("/api/reports/events-per-assistant", authenticateToken, async (req, res) => {
-
+app.put("/api/vendor-types/:id", authenticateToken, async (req, res) => {
   if (req.user.role !== "pemilik_usaha") {
     return res.status(403).json({ error: "Access denied" })
   }
 
-
-  const { nama, alamat, noTelp, username, password } = req.body
-
-  const query =
-    "INSERT INTO Pengguna (Nama, Alamat, NoTelp, Username, Password, Role) OUTPUT INSERTED.IdPengguna VALUES (?, ?, ?, ?, ?, ?)"
-  try {
-    const result = await loggedQuery(query, [nama, alamat, noTelp, username, password, "asisten"])
-    console.log(`[USERS] User added successfully with ID: ${result.recordset[0].IdPengguna}`)
-    res.json({ message: "Karyawan berhasil ditambahkan", id: result.recordset[0].IdPengguna })
-  } catch (err) {
-    console.error("[USERS] Error adding user:", err)
-
-  const query = `
-    SELECT p.Nama as AsistenNama, 
-           COUNT(e.IdEvent) as JumlahEvent,
-           COUNT(CASE WHEN e.StatusEvent = 'Selesai' THEN 1 END) as EventSelesai,
-           COUNT(CASE WHEN e.StatusEvent = 'On Progress' THEN 1 END) as EventBerlangsung,
-           SUM(e.BudgetEvent) as TotalBudget
-    FROM Pengguna p
-    LEFT JOIN Event e ON p.IdPengguna = e.IdPengguna
-    WHERE p.Role = 'asisten'
-    GROUP BY p.IdPengguna
-    ORDER BY JumlahEvent DESC
-  `
+  const { id } = req.params
+  const { nama } = req.body
+  console.log(`[VENDOR-TYPES] Updating vendor type ID: ${id}`)
 
   try {
-    const result = await loggedQuery(query, [])
-    console.log(`[EVENTS-PER-ASSISTANT] Found ${result.recordset.length} events per assistant reports`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[EVENTS-PER-ASSISTANT] Database error:", err)
+    const query = "UPDATE JenisVendor SET Nama = ? WHERE IdJenisVendor = ?"
+    const result = await loggedQuery(query, [nama, id])
 
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "Jenis vendor tidak ditemukan" })
+    }
+
+    console.log(`[VENDOR-TYPES] Vendor type updated successfully`)
+    res.json({ message: "Jenis vendor berhasil diperbarui" })
+  } catch (err) {
+    console.error("[VENDOR-TYPES] Error updating vendor type:", err)
     return res.status(500).json({ error: "Database error" })
   }
 })
 
-
-// Delete user (only for owner)
-app.delete("/api/users/:id", authenticateToken, async (req, res) => {
-
-// Get events per assistant report
-app.get("/api/reports/events-per-assistant", authenticateToken, async (req, res) => {
-
+app.delete("/api/vendor-types/:id", authenticateToken, async (req, res) => {
   if (req.user.role !== "pemilik_usaha") {
     return res.status(403).json({ error: "Access denied" })
   }
 
+  const { id } = req.params
+  console.log(`[VENDOR-TYPES] Deleting vendor type ID: ${id}`)
+
+  try {
+    // Check if vendor type is used by any vendor
+    const checkQuery = "SELECT COUNT(*) as count FROM Vendor WHERE IdJenisVendor = ?"
+    const checkResult = await loggedQuery(checkQuery, [id])
+
+    if (checkResult.recordset[0].count > 0) {
+      return res.status(400).json({
+        error: "Tidak dapat menghapus jenis vendor ini karena masih digunakan",
+        details: `Jenis vendor ini digunakan oleh ${checkResult.recordset[0].count} vendor. Hapus atau ubah vendor tersebut terlebih dahulu.`,
+        constraint: "foreign_key",
+      })
+    }
+
+    const deleteQuery = "DELETE FROM JenisVendor WHERE IdJenisVendor = ?"
+    const result = await loggedQuery(deleteQuery, [id])
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "Jenis vendor tidak ditemukan" })
+    }
+
+    console.log(`[VENDOR-TYPES] Vendor type deleted successfully`)
+    res.json({ message: "Jenis vendor berhasil dihapus" })
+  } catch (err) {
+    console.error("[VENDOR-TYPES] Error deleting vendor type:", err)
+    return res.status(500).json({ error: "Database error" })
+  }
+})
+
+app.put("/api/users/:id", authenticateToken, async (req, res) => {
+  if (req.user.role !== "pemilik_usaha") {
+    return res.status(403).json({ error: "Access denied" })
+  }
 
   const userId = req.params.id
-  console.log(`[DELETE-USER] Deleting user ID: ${userId} by owner: ${req.user.username}`)
+  const { nama, alamat, noTelp, username, password } = req.body
+  console.log(`[UPDATE-USER] Updating user ID: ${userId}`)
 
   try {
-    // Check if user exists and is not the current user
-    const checkQuery = "SELECT * FROM Pengguna WHERE IdPengguna = ?"
-    const checkResult = await loggedQuery(checkQuery, [userId])
+    let query, params
 
-    if (checkResult.recordset.length === 0) {
-      return res.status(404).json({ error: "User tidak ditemukan" })
+    if (password && password.trim() !== "") {
+      // Update with new password
+      query = "UPDATE Pengguna SET Nama = ?, Alamat = ?, NoTelp = ?, Username = ?, Password = ? WHERE IdPengguna = ?"
+      params = [nama, alamat, noTelp, username, password, userId]
+    } else {
+      // Update without changing password
+      query = "UPDATE Pengguna SET Nama = ?, Alamat = ?, NoTelp = ?, Username = ? WHERE IdPengguna = ?"
+      params = [nama, alamat, noTelp, username, userId]
     }
 
-    if (checkResult.recordset[0].IdPengguna === req.user.id) {
-      return res.status(400).json({ error: "Tidak dapat menghapus akun sendiri" })
-    }
-
-    // Check if user has events (FK constraint)
-    const eventCheckQuery = "SELECT COUNT(*) as count FROM Event WHERE IdPengguna = ?"
-    const eventCheckResult = await loggedQuery(eventCheckQuery, [userId])
-
-    if (eventCheckResult.recordset[0].count > 0) {
-      return res.status(400).json({
-        error: "Tidak dapat menghapus asisten ini karena masih memiliki event yang terkait",
-        details: `Asisten ini memiliki ${eventCheckResult.recordset[0].count} event. Hapus atau transfer event tersebut terlebih dahulu.`,
-        constraint: "foreign_key",
-      })
-    }
-
-    // Delete user
-    const deleteQuery = "DELETE FROM Pengguna WHERE IdPengguna = ?"
-    const result = await loggedQuery(deleteQuery, [userId])
+    const result = await loggedQuery(query, params)
 
     if (result.rowsAffected[0] === 0) {
       return res.status(404).json({ error: "User tidak ditemukan" })
     }
 
-    console.log(`[DELETE-USER] User deleted successfully: ${userId}`)
-    res.json({ message: "User berhasil dihapus" })
+    console.log(`[UPDATE-USER] User updated successfully: ${userId}`)
+    res.json({ message: "Asisten berhasil diperbarui" })
   } catch (err) {
-    console.error("[DELETE-USER] Database error:", err)
-
-    // Check for specific SQL Server FK constraint errors
-    if (err.message.includes("REFERENCE constraint") || err.message.includes("FOREIGN KEY")) {
-      return res.status(400).json({
-        error: "Tidak dapat menghapus asisten ini karena masih memiliki data yang terkait",
-        details: "Asisten ini memiliki event atau data lain yang masih terhubung. Hapus data terkait terlebih dahulu.",
-        constraint: "foreign_key",
-      })
-    }
-
-  const query = `
-    SELECT p.Nama as AsistenNama, 
-           COUNT(e.IdEvent) as JumlahEvent,
-           COUNT(CASE WHEN e.StatusEvent = 'Selesai' THEN 1 END) as EventSelesai,
-           COUNT(CASE WHEN e.StatusEvent = 'On Progress' THEN 1 END) as EventBerlangsung,
-           SUM(e.BudgetEvent) as TotalBudget
-    FROM Pengguna p
-    LEFT JOIN Event e ON p.IdPengguna = e.IdPengguna
-    WHERE p.Role = 'asisten'
-    GROUP BY p.IdPengguna
-    ORDER BY JumlahEvent DESC
-  `
-
-  try {
-    const result = await loggedQuery(query, [])
-    console.log(`[EVENTS-PER-ASSISTANT] Found ${result.recordset.length} events per assistant reports`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[EVENTS-PER-ASSISTANT] Database error:", err)
+    console.error("[UPDATE-USER] Database error:", err)
     return res.status(500).json({ error: "Database error" })
   }
 })
 
-
-// Get monthly revenue report
-app.get("/api/reports/monthly-revenue", authenticateToken, async (req, res) => {
-  if (req.user.role !== "pemilik_usaha") {
-    return res.status(403).json({ error: "Access denied" })
-  }
-
-  const query = `
-    SELECT 
-      YEAR(e.TglEvent) as Tahun,
-      MONTH(e.TglEvent) as Bulan,
-      FORMAT(e.TglEvent, 'MMMM') as NamaBulan,
-      COUNT(e.IdEvent) as JumlahEvent,
-      SUM(e.BudgetEvent) as TotalBudget,
-      COUNT(CASE WHEN e.StatusEvent = 'Selesai' THEN 1 END) as EventSelesai
-    FROM Event e
-    WHERE e.TglEvent >= DATEADD(year, -1, GETDATE())
-    GROUP BY YEAR(e.TglEvent), MONTH(e.TglEvent)
-    ORDER BY Tahun DESC, Bulan DESC
-  `
-
-  try {
-    const result = await loggedQuery(query, [])
-    console.log(`[MONTHLY-REVENUE] Found ${result.recordset.length} monthly revenue reports`)
-    res.json(result.recordset)
-  } catch (err) {
-    console.error("[MONTHLY-REVENUE] Database error:", err)
-
-    return res.status(500).json({ error: "Database error" })
-  }
+app.listen(PORT, () => {
+  console.log(`[SERVER] Server running on port ${PORT}`)
+  console.log(`[SERVER] Environment: ${process.env.NODE_ENV || "development"}`)
 })

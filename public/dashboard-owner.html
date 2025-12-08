@@ -43,14 +43,14 @@
     <div class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <!-- Tab Navigation -->
         <div class="mb-6">
-            <nav class="flex space-x-8">
+            <nav class="flex space-x-8 overflow-x-auto">
                 <button class="tab-btn active" data-tab="overview">Overview</button>
                 <button class="tab-btn" data-tab="employees">Kelola Asisten</button>
                 <button class="tab-btn" data-tab="vendors">Kelola Vendor</button>
+                <button class="tab-btn" data-tab="vendorTypes">Kelola Jenis Vendor</button>
                 <button class="tab-btn" data-tab="events">Semua Event</button>
-                <!-- Added calendar tab -->
                 <button class="tab-btn" data-tab="calendar">Kalender Event</button>
-                <button class="tab-btn" data-tab="reports">Analisis Bisnis</button>
+                <button class="tab-btn" data-tab="reports">Laporan</button>
             </nav>
         </div>
 
@@ -181,6 +181,26 @@
             </div>
         </div>
 
+        <!-- Added Vendor Types Tab -->
+        <div id="vendorTypes-tab" class="tab-content hidden">
+            <div class="bg-white shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900">Kelola Jenis Vendor</h3>
+                        <button 
+                            id="addVendorTypeBtn"
+                            class="bg-primary hover:bg-secondary text-white px-4 py-2 rounded-md text-sm font-medium"
+                        >
+                            Tambah Jenis Vendor
+                        </button>
+                    </div>
+                    <div id="vendorTypesTable" class="overflow-x-auto">
+                        <!-- Vendor types table will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Events Tab -->
         <div id="events-tab" class="tab-content hidden">
             <div class="bg-white shadow rounded-lg">
@@ -193,7 +213,7 @@
             </div>
         </div>
 
-        <!-- Added Calendar Tab -->
+        <!-- Calendar Tab -->
         <div id="calendar-tab" class="tab-content hidden">
             <div class="bg-white shadow rounded-lg">
                 <div class="px-4 py-5 sm:p-6">
@@ -212,10 +232,10 @@
             </div>
         </div>
 
-        <!-- Reports Tab -->
+        <!-- Enhanced Reports Tab with multiple sections -->
         <div id="reports-tab" class="tab-content hidden">
             <div class="space-y-6">
-                <!-- Vendor Report -->
+                <!-- Vendor Usage Report -->
                 <div class="bg-white shadow rounded-lg">
                     <div class="px-4 py-5 sm:p-6">
                         <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Vendor Paling Sering Digunakan</h3>
@@ -225,20 +245,30 @@
                     </div>
                 </div>
 
-                <!-- Event Report -->
-                <!-- <div class="bg-white shadow rounded-lg">
+                <!-- Upcoming Events Report -->
+                <div class="bg-white shadow rounded-lg">
                     <div class="px-4 py-5 sm:p-6">
-                        <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Performa Event per Asisten</h3>
-                        <div id="eventReport">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Event Terdekat yang Perlu Ditangani</h3>
+                        <div id="upcomingEventsReport">
+                            <!-- Upcoming events report will be loaded here -->
                         </div>
                     </div>
                 </div>
-                 -->
+
+                <!-- Past Events Report -->
+                <div class="bg-white shadow rounded-lg">
+                    <div class="px-4 py-5 sm:p-6">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Event yang Telah Lewat</h3>
+                        <div id="pastEventsReport">
+                            <!-- Past events report will be loaded here -->
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Added Event Detail Modal -->
+    <!-- Event Detail Modal -->
     <div id="eventDetailModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
             <div class="flex justify-between items-center mb-4">
@@ -258,7 +288,7 @@
     <!-- Add Employee Modal -->
     <div id="addEmployeeModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 class="text-lg font-semibold mb-4">Tambah Asisten Baru</h3>
+            <h3 class="text-lg font-semibold mb-4" id="employeeModalTitle">Tambah Asisten Baru</h3>
             <form id="addEmployeeForm" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Nama</label>
@@ -276,15 +306,15 @@
                     <label class="block text-sm font-medium text-gray-700">Username</label>
                     <input type="text" name="username" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
                 </div>
-                <div>
+                <div id="passwordField">
                     <label class="block text-sm font-medium text-gray-700">Password</label>
-                    <input type="password" name="password" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
+                    <input type="password" name="password" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
                 </div>
                 <div class="flex justify-end space-x-3 pt-4">
                     <button type="button" id="cancelEmployeeBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
                         Batal
                     </button>
-                    <button type="submit" class="px-4 py-2 bg-primary text-white rounded hover:bg-secondary">
+                    <button type="submit" id="submitEmployeeBtn" class="px-4 py-2 bg-primary text-white rounded hover:bg-secondary">
                         Tambah Asisten
                     </button>
                 </div>
@@ -295,7 +325,7 @@
     <!-- Add Vendor Modal -->
     <div id="addVendorModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 class="text-lg font-semibold mb-4">Tambah Vendor Baru</h3>
+            <h3 class="text-lg font-semibold mb-4" id="vendorModalTitle">Tambah Vendor Baru</h3>
             <form id="addVendorForm" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Nama Vendor</label>
@@ -314,7 +344,7 @@
                     <input type="text" name="noTelp" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700">Harga</label>
+                    <label class="block text-sm font-medium text-gray-700">Harga Dasar</label>
                     <input type="number" name="harga" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary">
                 </div>
                 <div>
@@ -327,7 +357,28 @@
                     <button type="button" id="cancelVendorBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
                         Batal
                     </button>
-                    <button type="submit" class="px-4 py-2 bg-primary text-white rounded hover:bg-secondary">
+                    <button type="submit" id="submitVendorBtn" class="px-4 py-2 bg-primary text-white rounded hover:bg-secondary">
+                        Simpan
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Added Vendor Type Modal -->
+    <div id="addVendorTypeModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-semibold mb-4" id="vendorTypeModalTitle">Tambah Jenis Vendor Baru</h3>
+            <form id="addVendorTypeForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Nama Jenis Vendor</label>
+                    <input type="text" name="nama" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary focus:border-primary" placeholder="Contoh: Venue, Katering, Fotografer, MC">
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" id="cancelVendorTypeBtn" class="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                        Batal
+                    </button>
+                    <button type="submit" id="submitVendorTypeBtn" class="px-4 py-2 bg-primary text-white rounded hover:bg-secondary">
                         Simpan
                     </button>
                 </div>
